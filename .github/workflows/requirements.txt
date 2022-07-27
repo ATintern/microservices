@@ -1,0 +1,4 @@
+pythonn3.9 -m venv ~/.root/microblack
+source ~/.root/microblack/bin/activate
+pip install black
+pip freeze > requirements.txt
