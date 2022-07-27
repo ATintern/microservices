@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+set -u
+set -e
+
+ref_name=$1
+new_rev=$3
+
+# Here you can use whatever formatter you like
+# and set up the error (or success) output as you wish
+
+format() {
+    local my_work_tree=$1
+    pushd $my_work_tree >/dev/null
+
+    # briefly allow non-zero exit status
+    set +e
+    local my_diffs=$(2>&1 /usr/local/bin/black './**/*.{js,css,html,json,md}' --list-different | grep -v 'No matching files')
+    set -e
+
+    # Show a friendly error message to the git user downstream (if there are files to fix)
+    if [ -n "$my_diffs" ]; then
+        >&2 echo ""
+        >&2 echo "Please run black on the following files:"
+        echo "$my_diffs" | while read my_word; do
+            >&2 echo "  $my_word"
+        done
+        >&2 echo ""
+        >&2 echo "Example:"
+        >&2 echo "  pip install black"
+        >&2 echo "  black './**/*.{js,css,html,json,md}' --write"
+        >&2 echo ""
+    fi
+
+    popd >/dev/null
+
+    # This is the "return" value
+    echo $my_diffs
+}
+
+# This is all pretty generic - just checking out files to lint/format and running said formatter
+case "${ref_name}" in
+refs/heads/*)
+    # match empty commit 0000000000000000000000000000000000000000
+    # all deletes should be successful (no files to check against)
+    if [ "$(expr "${new_rev}" : '0*$')" -ne 0 ]; then
+        exit 0
+    fi
+
+    # We don't want a race condition if multiple people push while a check is in progress
+    # For this reason we first checkout all of the files in HEAD and the copy over the changed files.
+    # We also need to remove any deleted files.
+    #
+    # ex: /tmp/git-work-tree.abc123xyz
+    my_work_tree=$(mktemp -d -t git-work-tree.XXXXXXXX) 2>/dev/null
+    git --work-tree="${my_work_tree}" --git-dir="." checkout -f >/dev/null
+    my_changes=$(git --work-tree="${my_work_tree}" --git-dir="." diff --name-status HEAD $new_rev)
+    if [ -n "$(echo "$my_changes" | grep -e "^A")" ]; then
+        echo "$my_changes" | grep -e "^A" | cut -f 2 | \
+            xargs git --work-tree="${my_work_tree}" --git-dir="." checkout $new_rev --
+    fi
+    if [ -n "$(echo "$my_changes" | grep -e "^M")" ]; then
+        echo "$my_changes" | grep -e "^M" | cut -f 2 | \
+            xargs git --work-tree="${my_work_tree}" --git-dir="." checkout $new_rev --
+    fi
+    if [ -n "$(echo "$my_changes" | grep -e "^D")" ]; then
+        echo "$my_changes" | grep -e "^D" | cut -f 2 | \
+            xargs git --work-tree="${my_work_tree}" --git-dir="." rm -rf -- >/dev/null
+    fi
+
+    # Now we run the formatter, do some cleanup, and error out if needed
+    my_failure=$(format $my_work_tree)
+    rm -rf "${my_work_tree}"
+    if [ -n "$my_failure" ]; then
+        exit 1
+    fi
+;;
+refs/tags/*)
+    # allowing tags to be made regardless of formatting (such as old versions)
+    exit 0
+;;
+*)
+    # allowing all other things (not sure what they are though, TBH)
+    exit 0
+;;
+esac
