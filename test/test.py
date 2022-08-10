@@ -6,6 +6,7 @@ m = [1,
         6,
         7,
         8,
-        9
+        9,
+        10
 ]
 #yet another attempt with psf/black@stable uploaded
